@@ -285,7 +285,7 @@ def listener():
 
                         elif text.startswith("/stop"):
                             stop_session = True
-                            send_msg(chat_id, "🛑 *Stopping quiz...* Batch complete hone ke baad ruk jayega.")
+                            send_msg(chat_id, "🛑 *Stopping quiz...* Kya tum gunda banega re, chhota quiz me stop stop khel rha hai.")
 
                         elif text.startswith("/stats") or text.startswith("/leaderboard"):
                             show_leaderboard(chat_id)

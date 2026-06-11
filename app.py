@@ -334,7 +334,28 @@ def start_error_quiz_session(chat_id, count=10, timer=20):
             else:
                 display_options.append(opt)
         
-        explanation_text = f"✅ Correct: Option {['A','B','C','D'][correct_index]} - {q_data['options'][correct_index][:80]}"
+        # Build explanation from parsed data
+        opt_letter = ['A','B','C','D'][correct_index]
+        
+        # Extract Incorrect Part and Correct Replacement from the explanation field
+        incorrect_part = ""
+        correct_replacement = ""
+        if q_data.get("explanation"):
+            for line in q_data["explanation"].split("\n"):
+                if "**Incorrect Part:**" in line:
+                    incorrect_part = line.split("**Incorrect Part:**")[-1].strip()
+                elif "**Correct Replacement:**" in line:
+                    correct_replacement = line.split("**Correct Replacement:**")[-1].strip()
+        
+        explanation_text = f"✅ Option {opt_letter}: {q_data['options'][correct_index][:60]}"
+        if incorrect_part:
+            explanation_text += f"\n❌ Incorrect: {incorrect_part[:50]}"
+        if correct_replacement:
+            explanation_text += f"\n✔️ Replace: {correct_replacement[:50]}"
+        
+        # Telegram poll explanation limit is 200 chars
+        if len(explanation_text) > 200:
+            explanation_text = explanation_text[:197] + "..."
 
         poll_payload = {
             "chat_id": chat_id,
@@ -344,6 +365,7 @@ def start_error_quiz_session(chat_id, count=10, timer=20):
             "type": "quiz",
             "correct_option_id": correct_index,
             "explanation": explanation_text,
+            "explanation_parse_mode": "Markdown",
             "open_period": timer
         }
 

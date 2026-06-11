@@ -15,6 +15,13 @@ TOTAL_WORDS = 0
 all_words = []
 DEBUG_LOGS = ["App Starting..."]
 
+# Will be set during error detection import
+ERROR_TOTAL_QUESTIONS = 0
+error_all_questions = []
+error_is_paused = False
+error_stop_session = False
+error_session_stats = {}
+
 def add_log(msg):
     print(msg)
     DEBUG_LOGS.append(msg)
@@ -24,7 +31,7 @@ def add_log(msg):
 # --- CONFIGURATION ---
 TOKEN = os.getenv("BOT_TOKEN", "").strip()
 DEFAULT_CHAT_ID = os.getenv("CHAT_ID", "").strip()
-DATA_DIR = "grand-saga"
+DATA_DIR = "content/grand-saga"
 
 # =========================================================
 # SAFE STARTUP
@@ -88,6 +95,20 @@ try:
     is_paused = False
     stop_session = False
     
+    # Load Error Detection Questions
+    try:
+        import error_parser
+        error_all_questions = error_parser.parse_error_detection_questions()
+        ERROR_TOTAL_QUESTIONS = len(error_all_questions)
+        add_log(f"Loaded {ERROR_TOTAL_QUESTIONS} error detection questions.")
+    except Exception as ee:
+        add_log(f"Failed to load error detection: {ee}")
+        error_all_questions = []
+        ERROR_TOTAL_QUESTIONS = 0
+    
+    error_is_paused = False
+    error_stop_session = False
+    
     STARTUP_SUCCESS = True
     add_log(f"Startup complete. Loaded {TOTAL_WORDS} words.")
 
@@ -104,7 +125,7 @@ def home():
     log_str = "<br>".join(DEBUG_LOGS)
     if not STARTUP_SUCCESS:
         return f"<h1>⚠️ Bot Crashed!</h1><pre>{ERROR_MSG}</pre><h3>Logs:</h3><pre>{log_str}</pre>"
-    return f"<h1>✅ Mission 2 Bot is RUNNING on Render!</h1><p>Loaded {TOTAL_WORDS} words.</p><p>Status: {'PAUSED' if is_paused else 'RUNNING'}</p><p>Token: {'Set' if TOKEN else 'MISSING'}</p><h3>Live Logs:</h3><pre>{log_str}</pre>"
+    return f"<h1>Mission 2 Bot is RUNNING on Render!</h1><p>Vocab Quiz: {TOTAL_WORDS} words | Error Detection: {ERROR_TOTAL_QUESTIONS} questions</p><p>Status: {'Vocab PAUSED' if is_paused else 'Vocab RUNNING'} | {'Error PAUSED' if error_is_paused else 'Error RUNNING'}</p><p>Token: {'Set' if TOKEN else 'MISSING'}</p><h3>Live Logs:</h3><pre>{log_str}</pre>"
 
 # =========================================================
 # BOT LOGIC
@@ -118,8 +139,9 @@ def send_msg(chat_id, text):
         add_log(f"Failed to send message: {e}")
         return None
 
-# --- GLOBAL SESSION TRACKER ---
-session_stats = {} # {user_id: {"name": name, "qs": 0, "ok": 0, "ng": 0}}
+# --- GLOBAL SESSION TRACKERS ---
+session_stats = {} # {user_id: {"name": name, "qs": 0, "ok": 0, "ng": 0}} for vocab
+error_session_stats = {} # for error detection
 
 def show_leaderboard(chat_id):
     """Sends a professional Emoji Card style performance report for Top 20."""
@@ -219,8 +241,128 @@ def start_quiz_session(chat_id, count=10, timer=15):
             add_log(f"Poll error: {e}")
             time.sleep(5)
 
-    send_msg(chat_id, f"✅ *Quiz Batch Complete!*\n✔️ Total Completed: *{end_idx}* / {TOTAL_WORDS}\n▶️ Send /quiz to continue!")
+    send_msg(chat_id, "Quiz Batch Complete!\nTotal Completed: " + str(end_idx) + " / " + str(TOTAL_WORDS) + "\nSend /quiz to continue!")
     show_leaderboard(chat_id)
+
+# =========================================================
+# ERROR DETECTION QUIZ FUNCTIONS
+# =========================================================
+
+def show_error_leaderboard(chat_id):
+    """Sends error detection session performance report."""
+    try:
+        if not error_session_stats:
+            send_msg(chat_id, "No participants in this error detection session.")
+            return
+        
+        sorted_users = sorted(error_session_stats.items(), key=lambda x: x[1]["ok"], reverse=True)
+        total_participants = len(sorted_users)
+        
+        report = "---\n"
+        report += "ERROR DETECTION LEADERBOARD\n"
+        report += f"Participants: {total_participants}\n"
+        report += "---\n\n"
+        
+        for i, (uid, s) in enumerate(sorted_users[:10]):
+            cur_per = int((s["ok"] / s["qs"] * 100)) if s["qs"] > 0 else 0
+            rank = i + 1
+            report += f"{rank}. {s['name'].upper()}\n"
+            report += f"   Score: {s['ok']}/{s['qs']} ({cur_per}%)\n"
+            report += "---\n"
+        
+        send_msg(chat_id, report)
+        error_session_stats.clear()
+        
+    except Exception as e:
+        add_log(f"Error leaderboard error: {e}")
+
+
+def start_error_quiz_session(chat_id, count=10, timer=20):
+    """Starts an Error Detection quiz session."""
+    global error_stop_session, error_is_paused
+    add_log(f"Starting error detection quiz for {chat_id}")
+    error_stop_session = False
+    error_is_paused = False
+
+    try:
+        state = db.get_error_state()
+        start_idx = state["last_sent_index"] + 1
+    except Exception as e:
+        add_log(f"Database error in error thread: {e}")
+        send_msg(chat_id, f"Database error: {e}")
+        return
+
+    if start_idx >= ERROR_TOTAL_QUESTIONS:
+        send_msg(chat_id, "All error detection questions completed! You mastered them all!")
+        return
+
+    end_idx = min(start_idx + count, ERROR_TOTAL_QUESTIONS)
+    send_msg(chat_id, f"ERROR DETECTION QUIZ STARTED!\nQuestions: #{start_idx+1} to #{end_idx}\nTimer: {timer}s per question\n\nIdentify the part of the sentence that contains the error.")
+
+    for i in range(start_idx, end_idx):
+        if error_stop_session: break
+        while error_is_paused:
+            if error_stop_session: break
+            time.sleep(1)
+        if error_stop_session: break
+
+        q_data = error_all_questions[i]
+        
+        # Format question for poll
+        question_text = f"SPOT THE ERROR #{i+1}"
+        if q_data["topic"]:
+            question_text += f" [{q_data['topic']}]"
+        
+        # Show the sentence
+        sentence = q_data["sentence"]
+        if len(sentence) > 90:
+            sentence = sentence[:87] + "..."
+        
+        # Options are the 4 sentence parts
+        options = q_data["options"]
+        correct_index = q_data["correct_index"]
+        
+        if correct_index < 0 or len(options) != 4:
+            add_log(f"Skipping bad question #{i+1}")
+            continue
+        
+        # Truncate long options for Telegram
+        display_options = []
+        for opt in options:
+            if len(opt) > 100:
+                display_options.append(opt[:97] + "...")
+            else:
+                display_options.append(opt)
+        
+        explanation_text = f"Correct: Option {['A','B','C','D'][correct_index]} - {q_data['options'][correct_index][:80]}"
+
+        poll_payload = {
+            "chat_id": chat_id,
+            "question": question_text,
+            "options": display_options,
+            "is_anonymous": False,
+            "type": "quiz",
+            "correct_option_id": correct_index,
+            "explanation": explanation_text,
+            "open_period": timer
+        }
+
+        try:
+            res = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendPoll", json=poll_payload, timeout=20).json()
+            if res.get("ok"):
+                db.add_active_poll(res["result"]["poll"]["id"], correct_index, chat_id, quiz_type="error")
+                db.save_error_state(i)
+                if i < end_idx - 1: time.sleep(timer + 2)
+            else:
+                add_log(f"Error poll failed: {res}")
+                time.sleep(5)
+        except Exception as e:
+            add_log(f"Error poll error: {e}")
+            time.sleep(5)
+
+    send_msg(chat_id, f"ERROR DETECTION BATCH COMPLETE!\nTotal Completed: {end_idx} / {ERROR_TOTAL_QUESTIONS}\nSend /errorquiz to continue!")
+    show_error_leaderboard(chat_id)
+
 
 def listener():
     if not STARTUP_SUCCESS: return
@@ -249,19 +391,31 @@ def listener():
                             user_id = str(ans["user"]["id"])
                             user_name = ans["user"].get("first_name", "Student")
                             is_correct = (ans["option_ids"][0] == poll_data["correct_index"])
+                            quiz_type = poll_data.get("quiz_type", "vocab")
                             
-                            # 1. Update Database (Lifetime)
-                            db.update_analytics(user_id, user_name, is_correct)
-                            
-                            # 2. Update Local Session (Current Batch)
-                            if user_id not in session_stats:
-                                session_stats[user_id] = {"qs": 0, "ok": 0, "ng": 0}
-                            
-                            session_stats[user_id]["qs"] += 1
-                            if is_correct:
-                                session_stats[user_id]["ok"] += 1
+                            if quiz_type == "error":
+                                # Error Detection Scoring
+                                if user_id not in error_session_stats:
+                                    error_session_stats[user_id] = {"name": user_name, "qs": 0, "ok": 0, "ng": 0}
+                                error_session_stats[user_id]["qs"] += 1
+                                if is_correct:
+                                    error_session_stats[user_id]["ok"] += 1
+                                else:
+                                    error_session_stats[user_id]["ng"] += 1
                             else:
-                                session_stats[user_id]["ng"] += 1
+                                # Vocab Quiz Scoring
+                                # 1. Update Database (Lifetime)
+                                db.update_analytics(user_id, user_name, is_correct)
+                                
+                                # 2. Update Local Session (Current Batch)
+                                if user_id not in session_stats:
+                                    session_stats[user_id] = {"qs": 0, "ok": 0, "ng": 0}
+                                
+                                session_stats[user_id]["qs"] += 1
+                                if is_correct:
+                                    session_stats[user_id]["ok"] += 1
+                                else:
+                                    session_stats[user_id]["ng"] += 1
 
                     # --- HANDLE COMMANDS ---
                     elif "message" in update and "text" in update["message"]:
@@ -285,7 +439,7 @@ def listener():
 
                         elif text.startswith("/stop"):
                             stop_session = True
-                            send_msg(chat_id, "🛑 *Stopping quiz...*  leaderboard Generating....")
+                            send_msg(chat_id, "Stopping vocab quiz... leaderboard Generating....")
 
                         elif text.startswith("/stats") or text.startswith("/leaderboard"):
                             show_leaderboard(chat_id)
@@ -294,9 +448,63 @@ def listener():
                             try:
                                 new_idx = int(text.split()[1])
                                 db.save_state(new_idx - 1)
-                                send_msg(chat_id, f"✅ Progress set to word #{new_idx}")
+                                send_msg(chat_id, f"Progress set to word #{new_idx}")
                             except:
-                                send_msg(chat_id, "⚠️ Usage: /setindex 97")
+                                send_msg(chat_id, "Usage: /setindex 97")
+
+                        # --- ERROR DETECTION COMMANDS ---
+                        elif text.startswith("/errorquiz"):
+                            parts = text.split()
+                            count = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 10
+                            timer = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 20
+                            if ERROR_TOTAL_QUESTIONS == 0:
+                                send_msg(chat_id, "Error Detection questions not loaded. Check server logs.")
+                            else:
+                                threading.Thread(target=start_error_quiz_session, args=(chat_id, count, timer), daemon=True).start()
+
+                        elif text.startswith("/epause"):
+                            error_is_paused = True
+                            send_msg(chat_id, "Error Detection Quiz PAUSED. Send /eresume to continue.")
+
+                        elif text.startswith("/eresume"):
+                            error_is_paused = False
+                            send_msg(chat_id, "Error Detection Quiz RESUMED!")
+
+                        elif text.startswith("/estop"):
+                            error_stop_session = True
+                            send_msg(chat_id, "Stopping Error Detection quiz...")
+
+                        elif text.startswith("/estats") or text.startswith("/eleaderboard"):
+                            show_error_leaderboard(chat_id)
+
+                        elif text.startswith("/esetindex"):
+                            try:
+                                new_idx = int(text.split()[1])
+                                db.save_error_state(new_idx - 1)
+                                send_msg(chat_id, f"Error Detection progress set to question #{new_idx}")
+                            except:
+                                send_msg(chat_id, "Usage: /esetindex 50")
+
+                        # --- HELP COMMAND ---
+                        elif text.startswith("/help"):
+                            help_text = (
+                                "*Available Commands:*\n\n"
+                                "*Vocab Quiz:*\n"
+                                "/quiz [count] [timer] - Start vocab quiz\n"
+                                "/pause - Pause vocab quiz\n"
+                                "/resume - Resume vocab quiz\n"
+                                "/stop - Stop vocab quiz\n"
+                                "/stats - Show vocab leaderboard\n"
+                                "/setindex N - Set vocab progress to word N\n\n"
+                                "*Error Detection Quiz:*\n"
+                                "/errorquiz [count] [timer] - Start error detection quiz\n"
+                                "/epause - Pause error quiz\n"
+                                "/eresume - Resume error quiz\n"
+                                "/estop - Stop error quiz\n"
+                                "/estats - Show error detection leaderboard\n"
+                                "/esetindex N - Set error progress to question N"
+                            )
+                            send_msg(chat_id, help_text)
 
         except Exception as e:
             add_log(f"Listener Error: {e}")

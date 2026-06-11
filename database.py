@@ -30,6 +30,21 @@ def save_state(index):
         upsert=True
     )
 
+def get_error_state():
+    """Gets error detection progress from DB."""
+    state = state_col.find_one({"_id": "error_state"})
+    if not state:
+        return {"last_sent_index": -1}
+    return state
+
+def save_error_state(index):
+    """Saves error detection progress to DB."""
+    state_col.update_one(
+        {"_id": "error_state"},
+        {"$set": {"last_sent_index": index}},
+        upsert=True
+    )
+
 def update_analytics(user_id, name, is_correct):
     """Updates lifetime and session-like analytics in MongoDB."""
     user_id = str(user_id)
@@ -49,12 +64,13 @@ def get_leaderboard(limit=10):
     users = list(analytics_col.find().sort("correct", -1).limit(limit))
     return users
 
-def add_active_poll(poll_id, correct_index, chat_id):
-    """Tracks an open poll."""
+def add_active_poll(poll_id, correct_index, chat_id, quiz_type="vocab"):
+    """Tracks an open poll with quiz type (vocab or error)."""
     polls_col.insert_one({
         "poll_id": poll_id,
         "correct_index": correct_index,
         "chat_id": chat_id,
+        "quiz_type": quiz_type,
         "created_at": datetime.utcnow()
     })
 
@@ -63,5 +79,11 @@ def get_poll_data(poll_id):
     return polls_col.find_one({"poll_id": poll_id})
 
 def clear_active_polls():
-    """Clears tracked polls (e.g., at session end)."""
+    """Clears all tracked polls."""
     polls_col.delete_many({})
+
+def clear_old_polls():
+    """Clears polls older than 1 hour."""
+    from datetime import timedelta
+    cutoff = datetime.utcnow() - timedelta(hours=1)
+    polls_col.delete_many({"created_at": {"$lt": cutoff}})

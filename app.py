@@ -258,17 +258,19 @@ def show_error_leaderboard(chat_id):
         sorted_users = sorted(error_session_stats.items(), key=lambda x: x[1]["ok"], reverse=True)
         total_participants = len(sorted_users)
         
-        report = "---\n"
-        report += "ERROR DETECTION LEADERBOARD\n"
-        report += f"Participants: {total_participants}\n"
-        report += "---\n\n"
+        medals = ["🥇", "🥈", "🥉"]
+        report = "━━━━━━━━━━━━━━━━━━━━\n"
+        report += "📊 *ERROR DETECTION SCORES* 📊\n"
+        report += f"👥 *Participants*: {total_participants}\n"
+        report += "━━━━━━━━━━━━━━━━━━━━\n\n"
         
         for i, (uid, s) in enumerate(sorted_users[:10]):
             cur_per = int((s["ok"] / s["qs"] * 100)) if s["qs"] > 0 else 0
             rank = i + 1
-            report += f"{rank}. {s['name'].upper()}\n"
-            report += f"   Score: {s['ok']}/{s['qs']} ({cur_per}%)\n"
-            report += "---\n"
+            icon = medals[i] if i < 3 else f"{rank}."
+            report += f"{icon} *{s['name'].upper()}*\n"
+            report += f"   ✅ `{s['ok']}/{s['qs']}` ({cur_per}%)\n"
+            report += "─────────────────\n"
         
         send_msg(chat_id, report)
         error_session_stats.clear()
@@ -297,7 +299,8 @@ def start_error_quiz_session(chat_id, count=10, timer=20):
         return
 
     end_idx = min(start_idx + count, ERROR_TOTAL_QUESTIONS)
-    send_msg(chat_id, f"ERROR DETECTION QUIZ STARTED!\nQuestions: #{start_idx+1} to #{end_idx}\nTimer: {timer}s per question\n\nIdentify the part of the sentence that contains the error.")
+    send_msg(chat_id, f"━━━━━━━━━━━━━━━━━━━━\n🔍 *ERROR DETECTION QUIZ* 🔍\n━━━━━━━━━━━━━━━━━━━━\n📝 Questions: `#{start_idx+1}` to `#{end_idx}`\n⏱️ Timer: *{timer}s* each\n━━━━━━━━━━━━━━━━━━━━\n💡 *Identify the part of the sentence that contains the error*")
+    time.sleep(1)
 
     for i in range(start_idx, end_idx):
         if error_stop_session: break
@@ -316,11 +319,18 @@ def start_error_quiz_session(chat_id, count=10, timer=20):
             add_log(f"Skipping bad question #{i+1}")
             continue
         
-        # Format question for poll - include the sentence so users know what to analyze
+
+        # Format question - SENTENCE is main focus, Q# + topic is secondary reference
         sentence = q_data["sentence"]
-        question_text = f"🔍 Spot the Error #{i+1}\n\"{sentence}\""
-        if q_data["topic"]:
-            question_text += f"\n[{q_data['topic']}]"
+        
+        # Build with sentence as prominent first line
+        question_text = f"{sentence}"
+        
+        # Q number + topic as subtle reference below
+        topic = q_data.get('topic', '')
+        ref_line = f"#{i+1} · {topic}" if topic else f"#{i+1}"
+        if len(question_text) + len(ref_line) + 3 <= 300:
+            question_text += f"\n{ref_line}"
         
         # Telegram poll question limit is 300 chars
         if len(question_text) > 300:
@@ -347,11 +357,11 @@ def start_error_quiz_session(chat_id, count=10, timer=20):
                 elif "**Correct Replacement:**" in line:
                     correct_replacement = line.split("**Correct Replacement:**")[-1].strip()
         
-        explanation_text = f"✅ Option {opt_letter}: {q_data['options'][correct_index][:60]}"
+        explanation_text = f"✅ *Correct: Option {opt_letter}*"
         if incorrect_part:
-            explanation_text += f"\n❌ Incorrect: {incorrect_part[:50]}"
+            explanation_text += f"\n❌ *Error:* {incorrect_part[:40]}"
         if correct_replacement:
-            explanation_text += f"\n✔️ Replace: {correct_replacement[:50]}"
+            explanation_text += f"\n✔️ *Use:* {correct_replacement[:40]}"
         
         # Telegram poll explanation limit is 200 chars
         if len(explanation_text) > 200:
@@ -382,7 +392,7 @@ def start_error_quiz_session(chat_id, count=10, timer=20):
             add_log(f"Error poll error: {e}")
             time.sleep(5)
 
-    send_msg(chat_id, f"ERROR DETECTION BATCH COMPLETE!\nTotal Completed: {end_idx} / {ERROR_TOTAL_QUESTIONS}\nSend /errorquiz to continue!")
+    send_msg(chat_id, f"━━━━━━━━━━━━━━━━━━━━\n✅ *BATCH COMPLETE!* ✅\n━━━━━━━━━━━━━━━━━━━━\n📊 Progress: `{end_idx}` / `{ERROR_TOTAL_QUESTIONS}`\n💬 Send /errorquiz to continue!")
     show_error_leaderboard(chat_id)
 
 

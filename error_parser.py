@@ -95,24 +95,36 @@ def parse_error_detection_questions(filepath=None):
             options_buffer = []
             continue
         
-        # Parse options (A), (B), (C), (D)
+        # Parse options (A), (B), (C), (D) or (a), (b), (c), (d)
         if in_options:
-            opt_match = re.match(r'^\(([A-D])\)\s*(.+)$', stripped)
-            if opt_match:
-                options_buffer.append(opt_match.group(2).strip())
-                if len(options_buffer) == 4:
+            # First check if this line has MULTIPLE options on the same line, e.g. "(A) opt1 (b) opt2 (c) opt3 (d) opt4"
+            multi_opts = re.findall(r'\(([A-Da-d])\)\s*([^(]+)', stripped)
+            if len(multi_opts) >= 3:
+                # Multiple options on one line - collect all
+                for letter, opt_text in multi_opts:
+                    options_buffer.append(opt_text.strip())
+                if len(options_buffer) >= 2:
                     current_question["options"] = options_buffer
                     in_options = False
-            elif stripped == "" or stripped.startswith("---"):
-                # Empty line or separator while in options - might mean options ended early
-                pass
+            else:
+                opt_match = re.match(r'^\(([A-Da-d])\)\s*(.+)$', stripped)
+                if opt_match:
+                    options_buffer.append(opt_match.group(2).strip())
+                    if len(options_buffer) == 4:
+                        current_question["options"] = options_buffer
+                        in_options = False
+                elif stripped == "" or stripped.startswith("---"):
+                    # Empty line or separator while in options - save whatever we have
+                    if options_buffer and len(options_buffer) > 0:
+                        current_question["options"] = options_buffer
+                        in_options = False
         
         # Detect Correct Answer
         if "**Correct Answer:" in stripped:
-            # Extract which option: (A), (B), (C), (D)
-            ans_match = re.search(r'\(([A-D])\)', stripped)
+            # Extract which option: (A), (B), (C), (D) or (a), (b), (c), (d)
+            ans_match = re.search(r'\(([A-Da-d])\)', stripped)
             if ans_match:
-                letter = ans_match.group(1)
+                letter = ans_match.group(1).upper()
                 letter_to_index = {"A": 0, "B": 1, "C": 2, "D": 3}
                 current_question["correct_index"] = letter_to_index.get(letter, -1)
                 current_question["correct_answer_text"] = stripped

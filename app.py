@@ -308,23 +308,23 @@ def start_error_quiz_session(chat_id, count=10, timer=20):
 
         q_data = error_all_questions[i]
         
-        # Format question for poll
-        question_text = f"SPOT THE ERROR #{i+1}"
-        if q_data["topic"]:
-            question_text += f" [{q_data['topic']}]"
-        
-        # Show the sentence
-        sentence = q_data["sentence"]
-        if len(sentence) > 90:
-            sentence = sentence[:87] + "..."
-        
-        # Options are the 4 sentence parts
+        # Skip questions with invalid data
         options = q_data["options"]
         correct_index = q_data["correct_index"]
         
         if correct_index < 0 or len(options) != 4:
             add_log(f"Skipping bad question #{i+1}")
             continue
+        
+        # Format question for poll - include the sentence so users know what to analyze
+        sentence = q_data["sentence"]
+        question_text = f"🔍 Spot the Error #{i+1}\n\"{sentence}\""
+        if q_data["topic"]:
+            question_text += f"\n[{q_data['topic']}]"
+        
+        # Telegram poll question limit is 300 chars
+        if len(question_text) > 300:
+            question_text = question_text[:297] + "..."
         
         # Truncate long options for Telegram
         display_options = []
@@ -334,7 +334,7 @@ def start_error_quiz_session(chat_id, count=10, timer=20):
             else:
                 display_options.append(opt)
         
-        explanation_text = f"Correct: Option {['A','B','C','D'][correct_index]} - {q_data['options'][correct_index][:80]}"
+        explanation_text = f"✅ Correct: Option {['A','B','C','D'][correct_index]} - {q_data['options'][correct_index][:80]}"
 
         poll_payload = {
             "chat_id": chat_id,
